@@ -7,10 +7,10 @@ name=MATLAB
 
 pkgbase=matlab
 pkgname=('python-matlabengine' 'matlab')
-pkgrel=4
+pkgrel=1
 # No need to modify the pkgver here, which will be determined by the script
 # in the offline installer you provided.
-pkgver=9.10.0.1710957
+pkgver=9.12.0.1884302
 pkgdesc='A high-level language for numerical computation and visualization'
 arch=('x86_64')
 url='http://www.mathworks.com'
@@ -77,7 +77,7 @@ depends+=(
   'xerces-c')
 provides=('matlab-licenses' 'python-matlabengine' 'matlab-bin')
 source=(
-  "matlab.tar.zst" # Modify this to fit your file
+  "matlab.tar" # Modify this to fit your file
   "matlab.fik"
   "matlab.lic"
   "matlab.script")
@@ -124,13 +124,13 @@ pkgver() {
 prepare() {
   # Extract file installation key
   release=$(cat "${srcdir}/${pkgbase}/VersionInfo.xml" | grep "<release>" | sed "s|\s*<release>\(.*\)</release>\s*|\1|g")
-  
+
   msg2 "Release from tarball: ${release}"
-  
+
   _fik=$(grep -o '[0-9-]*' "${srcdir}/${pkgbase}.fik")
-  
+
   msg2 "Modifying the installer settings..."
-  
+
   _set="${srcdir}/${pkgbase}/installer_input.txt"
   sed -i "s|^# destinationFolder=|destinationFolder=${srcdir}/build|" "${_set}"
   sed -i "s|^# fileInstallationKey=|fileInstallationKey=${_fik}|"   "${_set}"
@@ -148,9 +148,9 @@ prepare() {
   # Implemented a fix for intel gpus with mesa 20;
   # https://wiki.archlinux.org/index.php/MATLAB#OpenGL_acceleration
   # https://wiki.archlinux.org/index.php/Intel_graphics#Old_OpenGL_Driver_(i965)
-  
+
   msg2 "Generating desktop file..."
-  
+
   gendesk -f -n \
     --pkgname "${pkgbase}" \
     --pkgdesc "${pkgdesc}" \
@@ -159,7 +159,6 @@ prepare() {
     --mimetypes "application/x-matlab-data;text/x-matlab" \
     --icon "${pkgbase}" \
     --exec 'sh -c '\''if [ "${MATLAB_INTEL_OVERRIDE}" = "yes" ] ; then exec env MESA_LOADER_DRIVER_OVERRIDE=i965 GTK_PATH=/usr/lib/gtk-2.0 matlab -desktop ; else exec env GTK_PATH=/usr/lib/gtk-2.0 matlab -desktop ; fi'\'
-    
 }
 
 build() {
@@ -169,7 +168,7 @@ build() {
   "${srcdir}/${pkgbase}/install" -inputFile "${srcdir}/${pkgbase}/installer_input.txt"
 
   msg2 "Build the python API"
-  
+
   cd "${srcdir}/build/extern/engines/python"
 
   msg2 "Checking supported vs existing matlab versions"
@@ -188,7 +187,7 @@ build() {
     echo "sys.version_info = (3, ${_matminor}, 0)"  >> "${_matcustom}"
   fi
   PYTHONPATH="${srcdir}" python setup.py build
-  
+
   msg2 removing build licenses...
   rm -rf "${srcdir}/build/licenses/*"
 }
@@ -196,11 +195,11 @@ build() {
 
 package_python-matlabengine() {
   depends+=("python" "matlab")
-  
+
   msg2 "Copying license"
   install -D -m644 "${srcdir}/${pkgbase}/license_agreement.txt" \
     "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-    
+
   msg2 "Package the python API"
   cd "${srcdir}/build/extern/engines/python"
   PYTHONPATH="${srcdir}" python setup.py install --root="${pkgdir}" --optimize 1 --skip-build
@@ -213,7 +212,7 @@ package_python-matlabengine() {
     tail -1)"
   _prefix="$(python -c 'import sys; print(sys.prefix)')"
   _pytminor="$(python -c 'import sys; print(sys.version_info.minor)')"
-  
+
   msg2 "Change around locations if spoofing is needed"
   if [[ "${_pytminor}" != "${_matminor}" ]]; then
     mv "${pkgdir}/${_prefix}/lib/python3".{"${_matminor}","${_pytminor}"}
@@ -281,7 +280,7 @@ package_matlab() {
     gfortranlib="gcc-matlab"
     gfortranexc="gfortran-matlab"
   fi
-  
+
   msg2 "Moving files from build area"
   install -dm755 "${pkgdir}/usr/lib/"
   mv "${srcdir}/build" "${pkgdir}/${instdir}"
@@ -327,22 +326,10 @@ package_matlab() {
   # <MATLABROOT>/sys/os/glnxa64/README.libstdc++
   sysdir="sys/os/glnxa64"
   install -d -m755 "${pkgdir}/${instdir}/backup/${sysdir}"
-  mv "${pkgdir}/${instdir}/${sysdir}/"{libstdc++.so.6.0.25,libstdc++.so.6} \
+  mv "${pkgdir}/${instdir}/${sysdir}/"{libstdc++.so.*,libgcc_s.so.*,libgfortran.so.*,libquadmath.so.*} \
     "${pkgdir}/${instdir}/backup/${sysdir}/"
-  mv "${pkgdir}/${instdir}/${sysdir}/libgcc_s.so.1" \
-    "${pkgdir}/${instdir}/backup/${sysdir}/"
-  mv "${pkgdir}/${instdir}/${sysdir}/"{libgfortran.so.5.0.0,libgfortran.so.5} \
-    "${pkgdir}/${instdir}/backup/${sysdir}/"
-  mv "${pkgdir}/${instdir}/${sysdir}/"{libquadmath.so.0.0.0,libquadmath.so.0} \
-    "${pkgdir}/${instdir}/backup/${sysdir}/"
-
-  # make sure MATLAB can find proper libraries libgfortran.so.3
-  mkdir -p "${pkgdir}/${instdir}/backup/bin"
-  cp "${pkgdir}/${instdir}/bin/matlab" "${pkgdir}/${instdir}/backup/bin"
-  # The gcc dependency should be determined at runtime.
-  sed -i "1s#^#if pacman -Q "${gfortranlib}' > /dev/null 2>&1 ; then \n export GCCVERSION=$(pacman -Q '${gfortranlib}" | awk '{print \$2}' | cut -d- -f1) \nfi\n\n#" "${pkgdir}/${instdir}/bin/matlab"
-  sed -i "1s/^/# Check the optional GCC dependency.\n/" "${pkgdir}/${instdir}/bin/matlab"
-  sed -i 's|LD_LIBRARY_PATH="`eval echo $LD_LIBRARY_PATH`"|if [ -n "${GCCVERSION}" ]; then \n LD_LIBRARY_PATH="`eval echo $LD_LIBRARY_PATH`:/usr/lib/gcc/x86_64-pc-linux-gnu/${GCCVERSION}"; \n else \n LD_LIBRARY_PATH="`eval echo $LD_LIBRARY_PATH`" \n fi \n|g' "${pkgdir}/${instdir}/bin/matlab"
+  mv ${pkgdir}/${instdir}/bin/glnxa64/libfreetype.so.* \
+    "${pkgdir}/${instdir}/backup/bin/glnxa64/"
 
   msg2 "Install the script file to make scripting easier with matlab"
   install -Dm 0755 "${srcdir}/matlab.script" "${pkgdir}/usr/bin/matscript"
